@@ -1,0 +1,263 @@
+import pandas as pd
+
+"""
+cst_prjSQLtemplate.py does the following:
+=========================================
+1) Requires "project_completed.csv" saved in "ProjectTracking"
+2) "project_completed.csv" file containing kraken project numbers. SPLIT THEM TO cst and prj BEFORE LOADING!
+2) parse one column of kraken project no. into dataframe or series
+3) generate a dictionary, where key is cst and values are the prj
+4) from dictionary in 3) create a sql query template
+5) replace first occurence of 'or ' with 'where '
+6) replace '[' and ']' with ''
+7) Output template "sql_query_project.txt", "sql_AssayCount.txt", "sql_workingplate_notes.txt" and "sql_query_masterplate.txt
+
+"""
+
+"""
+FORMAT of SQL query:
+====================
+select cst, prj, organism, title, orderdate, ordernumber
+from Project
+where cst in (118) and prj in (2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18) 
+or cst in (116) and prj in (2,3)
+or cst in (119) and prj in (1,2,3,4)
+or cst in (120) and prj in (1,2,3,4,5,6,7)
+or cst in (121) and prj in (2)
+or cst in (122) and prj in (1)
+or cst in (123) and prj in (1,2)
+or cst in (124) and prj in (1,2,3)
+or cst in (125) and prj in (1,2,3,4)
+or cst in (127) and prj in (1,2)
+"""
+
+"""
+Loading the file containing kraken project numbers:
+===================================================
+SPLIT THEM TO cst and prj BEFORE LOADING!
+Converting the loaded dataframe into a dictionary
+where key=cst, values=prj
+"""
+#Kraken no. must be split into prj and cst before loading!!!
+#For testing
+#complete_file = pd.read_csv(r'project_completed.csv', header=None)
+#For actual run
+complete_file = pd.read_csv(r'project_completed.csv', header=None)
+
+
+complete_df = pd.DataFrame(complete_file)
+complete_df.columns = (['cst', 'prj'])
+complete_df = complete_df.sort_values(by=['cst','prj'])
+
+#Convert to dictionary, key=cst, values=prj
+complete_dict = complete_df.groupby('cst')['prj'].apply(list).to_dict()
+
+
+"""
+Writing the dictionary to a txt file "sql_query_project.txt"
+============================================================
+"""
+# writing the sql query to a txt file
+
+#For testing
+#txt = 'sql_query_project.txt'
+
+#For actual run
+txt = r'sql_query_project.txt'
+
+with open(txt, 'w') as query:
+    query.write('select cst, prj, organism, title, orderdate, ordernumber\nfrom Project\n')
+    query.close()
+
+
+with open(txt, 'a') as query:
+    for k,v in complete_dict.items():
+        query.write('or cst in ({}) and prj in ({})\n'.format(k,v))
+    query.close()
+     
+
+# Replace first 'or ' with 'where '
+f = open(txt, 'rt')
+fread = f.read()
+f_or = fread.replace('or ', 'where ', 1)
+f.close()
+f = open(txt, 'wt')
+f.write(f_or)
+f.close()
+
+#Replace '[' with ''
+f = open(txt, 'rt')
+fread = f.read()
+f_1 = fread.replace('[', '')
+f.close()
+f = open(txt, 'wt')
+f.write(f_1)
+f.close()
+
+#Replace ']' with ''
+f = open(txt, 'rt')
+fread = f.read()
+f_2 = fread.replace(']', '')
+f.close()
+f = open(txt, 'wt')
+f.write(f_2)
+f.close()
+
+"""
+Writing the dictionary to a txt file "sql_query_masterplate.txt"
+================================================================
+"""
+
+# writing the sql query to a txt file
+
+#For testing
+#txt2 = 'sql_query_masterplate.txt'
+
+#For actual run
+txt2 = r'sql_query_masterplate.txt'
+
+with open(txt2, 'w') as query:
+    query.write('select name, notes, datemade, mp_select.cst, prj\nfrom mp\njoin mp_select\non mp.p = mp_select.p\n')
+    query.close()
+
+
+with open(txt2, 'a') as query:
+    for k,v in complete_dict.items():
+        query.write('or mp_select.cst in ({}) and prj in ({})\n'.format(k,v))
+    query.close()
+
+# Replace first 'or ' with 'where '
+f2 = open(txt2, 'rt')
+fread2 = f2.read()
+f_or2 = fread2.replace('or ', 'where ', 1)
+f2.close()
+f2 = open(txt2, 'wt')
+f2.write(f_or2)
+f2.close()
+
+#Replace '[' with ''
+f2 = open(txt2, 'rt')
+fread2 = f2.read()
+f_12 = fread2.replace('[', '')
+f2.close()
+f2 = open(txt2, 'wt')
+f2.write(f_12)
+f2.close()
+
+#Replace ']' with ''
+f2 = open(txt2, 'rt')
+fread2 = f2.read()
+f_22 = fread2.replace(']', '')
+f2.close()
+f2 = open(txt2, 'wt')
+f2.write(f_22)
+f2.close()
+
+
+
+"""
+Writing the dictionary to a txt file "sql_AssayCount.txt"
+=========================================================
+"""
+
+# writing the sql query to a txt file
+
+#For testing
+#txt2 = 'sql_query_masterplate.txt'
+
+#For actual run
+txt3 = r'sql_AssayCount.txt'
+
+with open(txt3, 'w') as query:
+    query.write('select dp_select.cst, prj, dp_select.p, m_p, s_n\nfrom view_mp_p_content\njoin dp_select\non view_mp_p_content.p = dp_select.p\n')
+    query.close()
+
+
+with open(txt3, 'a') as query:
+    for k,v in complete_dict.items():
+        query.write('or dp_select.cst in ({}) and prj in ({})\n'.format(k,v))
+    query.close()
+
+# Replace first 'or ' with 'where '
+f3 = open(txt3, 'rt')
+fread3 = f3.read()
+f_or3 = fread3.replace('or ', 'where ', 1)
+f3.close()
+f3 = open(txt3, 'wt')
+f3.write(f_or3)
+f3.close()
+
+#Replace '[' with ''
+f3 = open(txt3, 'rt')
+fread3 = f3.read()
+f_13 = fread3.replace('[', '')
+f3.close()
+f3 = open(txt3, 'wt')
+f3.write(f_13)
+f3.close()
+
+#Replace ']' with ''
+f3 = open(txt3, 'rt')
+fread3 = f3.read()
+f_23 = fread3.replace(']', '')
+f3.close()
+f3 = open(txt3, 'wt')
+f3.write(f_23)
+f3.close()
+
+
+"""
+Writing the dictionary to a txt file "sql_workingplate_notes.txt"
+=================================================================
+"""
+
+#For actual run
+txt4 = r'sql_workingplate_notes.txt'
+
+with open(txt4, 'w') as query:
+    query.write('select dp_select.cst, prj, dp_select.p, notes\nfrom dp\njoin dp_select\non dp.p = dp_select.p\n')
+    query.close()
+
+
+with open(txt4, 'a') as query:
+    for k,v in complete_dict.items():
+        query.write('or dp_select.cst in ({}) and prj in ({})\n'.format(k,v))
+    query.close()
+
+# Replace first 'or ' with 'where '
+f4 = open(txt4, 'rt')
+fread4 = f4.read()
+f_or4 = fread4.replace('or ', 'where ', 1)
+f4.close()
+f4 = open(txt4, 'wt')
+f4.write(f_or4)
+f4.close()
+
+#Replace '[' with ''
+f4 = open(txt4, 'rt')
+fread4 = f4.read()
+f_14 = fread4.replace('[', '')
+f4.close()
+f4 = open(txt4, 'wt')
+f4.write(f_14)
+f4.close()
+
+#Replace ']' with ''
+f4 = open(txt4, 'rt')
+fread4 = f4.read()
+f_24 = fread4.replace(']', '')
+f4.close()
+f4 = open(txt4, 'wt')
+f4.write(f_24)
+f4.close()
+
+
+print('"sql_AssayCount.txt", "sql_workingplate_notes.txt", "sql_query_masterplate.txt" \nand "sql_query_project.txt" exported to: \n"L" ')
+print('\nPlease save "sql_AssayCount" as: \n".csv"')
+print('\nPlease save "sql_workingplate_notes" as: \n".csv"')
+print('\nPlease save "sql_query_masterplate" as: \n".csv"')
+print('\nPlease save "sql_query_project" as: \n".csv"')
+
+
+##if __name__ == '__main__':
+##    print()
