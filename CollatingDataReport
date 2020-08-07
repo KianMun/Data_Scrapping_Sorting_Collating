@@ -1,0 +1,278 @@
+import pandas as pd
+import re
+
+"""
+Requires installation of pandas library. Pandas is an addon data handling library
+Requires 2 files: "projectinfo_query.csv", "AssayDispensedLog.csv"
+
+"projectinfo_query.csv" - from SQL query of Kraken
+"AssayCount.csv" - from SQL query of Kraken
+"workingplate_notes_query.csv" - from SQL query of Kraken
+"masterplateinfo_query.csv" - from SQL query of Kraken
+
+FinalReport.py does the following:
+
+It does the following to the "projectinfo_query.csv" file:
+==========================================================
+1) Drop out rows without "ordernumber"(i.e. no completion date)
+
+2) Extract the project type from the Project Title
+
+i.	TI - Trait introgression
+ii.	GC - Germplasm Characterization
+iii.	MP - Mapping 
+iv.	QC - QC
+v.	DV – Development
+
+3) Concatenate "cst" and "prj" with "prj" having "." and 3 leading zeroes.e.g 118.001
+
+4) Output "projinfo_df" dataframe for step 6)
+
+It does the following to the "AssayCount.csv" and "workingplate_notes_query.csv"file:
+=====================================================================================
+5) Calculates datapoints by Number of plates x 96 x Number of Assays
+6) Calculates number of dilution plates per project and adds 1152 to the datapoints (3x384=1152)
+
+
+It does the following to the "MasterplateSQLinfo.csv" file:
+===========================================================
+7) Concatenate "cst" and "prj" with "prj" having "." and 3 leading zeroes.e.g 118.001
+8) Add column "Extraction Method" which contains the below information:
+
+i.    Sbeadex Low
+ii.   Sbeadex Normal
+iii.  Sbeadex High
+iv.   In house
+v.    CherryPicked (inferred from "name" column that contains "_DNA_"
+
+9) groupby project and total "name" count x 96
+10) cherry pick plates separated out
+11) Output "final_report.csv"
+"""
+
+"""
+=============================================
+Processing of "projectinfoSQLquery.csv" file:
+=============================================
+"""
+
+"""
+Loading the "projectinfoSQLquery.csv" file and dropping out rows that has no "ordernumber"
+"""
+#Test Run
+#projinfo_file = pd.read_csv(r'projectinfoSQLquery.csv', sep=',', engine='python')
+
+#Actual run
+projinfo_file = pd.read_csv(r'projectinfo_query.csv', sep=',', engine='python')
+
+projinfo_df = pd.DataFrame(projinfo_file)
+
+#Changing "cst and "prj" into str objects to allow concatenation later
+projinfo_df[['cst', 'prj']] = projinfo_df[['cst', 'prj']].astype(int).astype(str)
+
+#Dropping rows that has no "ordernumber"
+projinfo_df.dropna(axis=0, subset=['ordernumber'], inplace=True)
+
+
+"""
+Extracting the project type from the Project Title
+"""
+# Dictionary of Project Types
+proj_type = {'TI': 'Trait introgression', 'GC':'Germplasm Characterization',
+             'MP':'Mapping', 'QC': 'QC', 'DV':'Development'}
+
+#Extracting the TypeCode and mapping the values from proj_type dict into "Type"
+projinfo_df['TypeCode'] = projinfo_df['title'].str[1:3]
+projinfo_df['Type'] = projinfo_df['TypeCode'].map(proj_type)
+
+
+"""
+Add 3 leading zeroes to prj and concatenate "cst" with "prj"
+"""
+#Add 3 leading zeroe to "prj"
+projinfo_df["prj"] = projinfo_df["prj"].str.zfill(3)
+
+#Concat "cst", "." and "prj"
+projinfo_df["Project"] = projinfo_df["cst"] + "." + projinfo_df["prj"]
+
+#Drop "cst", "prj", "TypeCode". Rearranging the columns
+projinfo_df.drop(axis=1, columns=["cst", "prj", "TypeCode"], inplace=True)
+projinfo_df = projinfo_df[['Project', 'title', 'organism', 'Type', 'orderdate', 'ordernumber']]
+projinfo_df.columns =['Project', 'Title', 'Organism', 'Type', 'OrderDate', 'OrderNumber']
+
+
+"""
+=============================================
+Processing of "AssayCount.csv" file:
+=============================================
+"""
+
+#Loading the file and putting it into a dataframe
+assaycount_file = pd.read_csv(r'AssayCount.csv', sep=',', engine='python')
+assaycount_df = pd.DataFrame(assaycount_file)
+
+#Changing "cst and prj" into str objects to allow concatenation later
+assaycount_df[['cst', 'prj']] = assaycount_df[['cst','prj']].astype(int).astype(str)
+
+#Add 3 leading zeroes to "prj"
+assaycount_df['prj'] = assaycount_df['prj'].str.zfill(3)
+
+#Concat "cst", "." and "prj"
+assaycount_df['Project'] = assaycount_df['cst'] + '.' + assaycount_df['prj']
+
+#Drop "cst" and "prj"
+assaycount_df.drop(axis=1, columns=['cst', 'prj'], inplace=True)
+
+#Drop rows with 0 in 's_n'
+assaycount_df = assaycount_df[assaycount_df.s_n !=0]
+
+#Drop rows with 0 in 'm_p'
+assaycount_df = assaycount_df[assaycount_df.m_p !=0]
+
+#Putting "assaycount_df" into a new dataframe "ucount_mp" for counting of datapoints
+ucount_mp = pd.DataFrame(assaycount_df)
+
+#Dropping 's_n', only need 'm_p' for counting. NOTE: 's_n' can also be used
+ucount_mp.drop(axis=1, columns=['s_n'], inplace=True)
+
+#Groupby "Projects" and counting the 'm_p'
+dp_nodil = ucount_mp.groupby('Project', as_index=False)['m_p'].count()
+
+#Multiply the counts by 96 (96 well DNA plate)
+dp_nodil['Datapoints'] = dp_nodil['m_p']*96
+
+#Dropping 'm_p', keeping only 'Projects' and 'Datapoints'
+dp_nodil.drop(axis=1, columns=['m_p'], inplace=True)
+
+
+"""
+==================================================
+Processing of "workingplate_notes_query.csv" file:
+==================================================        
+"""
+
+#Loading the file and putting it into a dataframe
+workplate_notes = pd.read_csv(r'workingplate_notes_query.csv', sep=',', engine='python')
+workplate_notes_df = pd.DataFrame(workplate_notes)
+
+#Dropping rows without values in 'notes'
+wp_notes = workplate_notes_df.dropna(subset=['notes'])
+
+#Dilution notes begins with "1:", filtering them out
+wp_notes['Dilution'] = wp_notes['notes'].str.startswith('1:', na=False)
+
+#Dropping out rows that are "False", i.e. no dilution plates
+false_drop = wp_notes[wp_notes['Dilution'] == False].index
+wp_notes.drop(false_drop, inplace=True)
+
+#Changing "cst and prj" into str objects to allow concatenation later
+wp_notes[['cst', 'prj']] = wp_notes[['cst','prj']].astype(int).astype(str)
+
+#Add 3 leading zeroes to "prj"
+wp_notes['prj'] = wp_notes['prj'].str.zfill(3)
+
+#Concat "cst", "." and "prj"
+wp_notes['Project'] = wp_notes['cst'] + '.' + wp_notes['prj']
+
+#Drop "cst" and "prj"
+wp_notes.drop(axis=1, columns=['cst', 'prj', 'notes'], inplace=True)
+
+#Groupby 'p' and count the number of dilution
+wp_dil = wp_notes.groupby('p', as_index=False)['Dilution'].count()
+wp_notes.drop(axis=1, columns=['Dilution'], inplace=True)
+
+#Merge to get "Projects" number
+dil_proj_count = pd.merge(wp_notes, wp_dil, how='left', on='p')
+
+#Sum all dilution plates per 'Project"
+dil_proj = dil_proj_count.groupby('Project', as_index=False)['Dilution'].sum()
+dil = dil_proj.dropna(subset=['Dilution'])
+
+#Merging the "dp_nodil" with "dil"
+datapoint_dil = pd.merge(dp_nodil, dil, how='left', on='Project')
+
+#Fill NaN with 0
+datapoint_dil['Dilution'].fillna(0, inplace=True)
+
+#Adding 1152 to projects that has dilution plates
+datapoint_dil['Total_Datapoints'] = datapoint_dil['Datapoints'] + (datapoint_dil['Dilution']*1152)
+datapoint_dil.drop(axis=1, columns=['Datapoints', 'Dilution'], inplace=True)
+
+
+"""
+===============================================
+Processing of "masterplateinfo_query.csv" file:
+===============================================
+"""
+
+"""
+Loading the "MasterplateSQLinfo.csv" file
+Concat the "cst" and "prj" with 3 leading zeroes in "prj"
+"""
+#Test run
+#masterplate_file = pd.read_csv(r'masterplateinfo_query.csv', sep=',', engine='python')
+
+#Actual run
+masterplate_file = pd.read_csv(r'masterplateinfo_query.csv', sep=',', engine='python')
+
+masterplate_df = pd.DataFrame(masterplate_file)
+
+#Changing "cst and "prj" into str objects to allow concatenation later
+masterplate_df[['cst', 'prj']] = masterplate_df[['cst', 'prj']].astype(int).astype(str)
+
+#Add 3 leading zeroe to "prj"
+masterplate_df["prj"] = masterplate_df["prj"].str.zfill(3)
+
+#Concat "cst", "." and "prj"
+masterplate_df["Project"] = masterplate_df["cst"] + "." + masterplate_df["prj"]
+masterplate_df.drop(axis=1, columns=["cst", "prj"], inplace=True)
+
+"""
+Extract out the cherrrypicked plates(str.contains('_DNA_')
+Remove the cherrypicked plates
+Extract the "ExtractionMethods" from "notes"
+Calculate the number of samples by no. of plates * 96
+Final output "sample_extracted"
+"""
+#Extract out the cherrypicked plates
+cherrypick = masterplate_df[masterplate_df['name'].str.contains('_DNA_')]
+cherrypick = pd.DataFrame(cherrypick.groupby('Project')['name'].count())
+cherrypick = cherrypick.rename(columns={'name':'CherryPicked'})
+
+#Remove the cherrypicked plates
+masterplate_df = masterplate_df[masterplate_df['name'].str.contains('_DNA_')==False]
+
+
+#Extract "ExtractionMethod" from "notes"
+masterplate_df['ExtractionMethod'] = (masterplate_df['notes'].str.extract(pat='^(\S+\s){1}')) + (masterplate_df['notes'].str.extract(pat='^(\S+\s){2}')) + (masterplate_df['notes'].str.extract(pat='^(\S+\s*){3}'))
+#masterplate_df.to_csv(r'ExtractionMethod.csv')
+
+
+#Groupby "ExtractionMethod", followed by *96 (96 well per plate)
+masterplate = pd.DataFrame(masterplate_df.groupby('Project')['notes'].count()*96)
+sample_extracted = masterplate.rename(columns={'notes': 'SamplesExtracted'})
+
+
+"""
+Merge "projectinfo_query.csv" and "AssayCount.csv" and then to "sample_extracted" to add the Count, sample extracted and output to "final_report.csv"
+"""
+final_report = pd.merge(projinfo_df, datapoint_dil, how='left', on="Project")
+final_report = pd.merge(final_report, sample_extracted, how='left', on='Project')
+
+
+#Output to "final_report.csv"
+final_report.to_csv(r'final_report.csv')
+
+print('"final_report.csv" is saved in: \n"Datapoint_reports"')
+######
+
+
+##-----------------------##
+##For Testing the script ##
+##-----------------------##
+##if __name__ == '__main__':
+##    projinfo_df.to_csv(r'projinfo.csv')
+##    print(projinfo_df.info())
+##    print(projinfo_df)
+    
+
