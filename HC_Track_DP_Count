@@ -1,0 +1,159 @@
+import pandas as pd
+import os
+
+"""
+Requires installation of pandas library. Pandas is an addon data handling library
+
+The script does the following:
+1)Scraps data from a specific file that user specifies
+2)Scraps data from the latest file from a specific folder user specifies
+
+The data being scrapped are:
+1)Project No.
+2)Date
+3)Time
+4)User
+5)PC terminal used
+6)Time Period AM/PM inferred from the time
+
+The output are then saved as:
+A csv file named ".csv"
+OR a text file named ".csv"
+
+Both output files will be saved in:
+Z:''
+"""
+
+
+"""
+For specific file use below
+"""
+##usefile = pd.read_csv(r'', sep='delimiter', engine='python', header=None)
+##file_df = pd.DataFrame(usefile)
+
+"""
+For latest file in current month folder, use below
+Function to find latest file in the folder
+Please specify the folder
+"""
+def getlistoffiles(dirName):
+    listoffile = os.listdir(dirName)
+    allFiles = list()
+
+    for i in listoffile:
+        fullPath = os.path.join(dirName, i)
+
+        if os.path.isdir(fullPath):
+            allFiles = allFiles + getlistoffiles(fullPath)
+        else:
+            allFiles.append(fullPath)
+    return max(allFiles, key=os.path.getctime)
+
+latest_file = getlistoffiles(r'2020-08')
+file = pd.read_csv(latest_file, sep='delimiter', engine='python', header=None)
+file_df = pd.DataFrame(file)
+
+"""
+Spliting log file into their indvidual columns 
+"""
+file_df = file_df[0].str.split('\t', expand=True)
+file_df['User_PC'] = file_df[1].str.split('(')
+file_df.drop(1, axis=1, inplace=True)
+file_df['User'] = file_df['User_PC'].str[0]
+file_df['PC'] = file_df['User_PC'].str[1]
+file_df['PC'] = file_df['PC'].str.replace(')','')
+file_df.drop('User_PC', axis=1, inplace=True)
+file_df['Project'] = file_df[0].str[0:7]
+file_df['Date'] = file_df[0].str[8:16]
+file_df['Time'] = file_df[0].str[17:]
+file_df.drop(0, axis=1, inplace=True)
+
+"""
+Rearranging columns into their proper order
+"""
+header_name = { 1:'User', 2:'Log'}
+file_df.rename(columns=header_name, inplace=True)
+
+file_df = file_df[['Project', 'Date','Time', 'User', 'PC','Log']]
+
+"""
+Filtering Meridian Dispensing data out
+"""
+meridian_dispense = file_df['PC'] == 'MEDIRIAN-PC'
+
+meridianpc_df = file_df[meridian_dispense]
+
+meridian_df = meridianpc_df[meridianpc_df['Log'].str.contains('MEDIRIAN-PC:EQUATOR Saved plate')]
+
+#To Do iloc problem, copy of a slice
+meridian_df['Plate']= meridian_df['Log'].str[32:39]
+meridian_df.drop(columns='Log', axis=1, inplace=True)
+
+"""
+Drop duplicate plates and keep first instance
+Convert Time and Date column to datetime
+"""
+meridian_df.drop_duplicates(subset='Plate', keep='first', inplace=True)
+meridian_df['Date'] = pd.to_datetime(meridian_df['Date'], format='%d-%m-%y')
+meridian_df['AMPM'] = meridian_df['Time'].str[0:2].astype(str).astype(int)
+
+"""
+Function to return AM or PM to a new column "AM/PM"
+Drop "AMPM" column
+"""
+def ampm(x):
+    a = 'AM'
+    b = 'PM'
+    if x < 12:
+        return a
+    else:
+        return b
+
+meridian_df['AM/PM'] = meridian_df['AMPM'].apply(lambda x: ampm(x))
+meridian_df.drop(['AMPM'], axis=1, inplace=True)
+
+"""
+Append output to csv file
+"""
+
+meridian_df.to_csv(r'', header=False, index=None, mode='a')   ## Output append to csv file
+"""
+===============================================================================================================================================================================
+"""
+
+"""
+===========
+Exact Count
+===========
+"""
+
+"""
+Count No. of times Assay dispensed
+Return Project, Date, Time, AssayDispensed(groupby.sum(number of times assay added))
+"""
+meridian_pc = file_df['PC'] == 'MEDIRIAN-PC'    #Setting the filter 'MERIDIAN-PC'
+assay_dispensed_pcdf = file_df[meridian_pc]
+assay_dispensed_df = assay_dispensed_pcdf[assay_dispensed_pcdf['Log'].str.contains('Wells. Mix:')]
+assay_dispensed_df = assay_dispensed_df[assay_dispensed_df['Log'].str.contains('Failed Aliquot verification')==False]   #Remove values that contains 'Failed...'
+
+#assay_dispensed_df['Count'] = assay_dispensed_df['Log'].str[-19:-16]
+#assay_dispensed_df['Count'] = assay_dispensed_df['Log'].str[-25:-22]
+
+assay_dispensed_split = assay_dispensed_df['Log'].str.split(' ', expand=True)
+assay_dispensed_df.drop(columns='Log', axis=1, inplace=True)
+assay_dispensed_df['Count'] = assay_dispensed_split[14].astype(int)
+
+
+"""
+=================
+Ouput Exact Count
+=================
+"""
+### Grouping counts by project(EXACT Count)
+assay_exact = pd.DataFrame((assay_dispensed_df.groupby('Project')['Count'].sum()))
+date = file_df['Date'].iloc[0]  ##Getting the date
+assay_exact['Date'] = date
+assay_exact = assay_exact[['Date', 'Count']]
+
+# Output to csv log
+assay_exact.to_csv(r'', header=False, mode='a')
