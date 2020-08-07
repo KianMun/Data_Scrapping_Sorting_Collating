@@ -1,0 +1,259 @@
+import pandas as pd
+import os
+import pyautogui
+
+"""
+Requires installation of pandas library. Pandas is an addon data handling library
+
+TrackLabProcess.py does the following:
+
+It tracks the following processes:
+1) Track Assay picking per project
+2) Track Replikator stamping per project
+3) Track Meridian/ Hydrocyler run per project
+4) Track last reads of working plate per project
+5) Track Scoring status: Submit per project
+6) Track DNA extraction per project
+
+7) Collates all data (except item(4)) into ".csv"
+8) Collates last reads for the day to ".csv"
+
+9) Emails (7) and (8) to recepients
+
+"""
+
+"""
+For specific file use below
+#For testing: file 23 has all processes#
+"""
+##usefile = pd.read_csv(r'', sep='delimiter', engine='python', header=None)
+##file_df = pd.DataFrame(usefile)
+
+"""
+For latest file in current month folder, use below
+A Function to find latest file in the folder
+Please specify the folder
+"""
+def getlistoffiles(dirName):
+    listoffile = os.listdir(dirName)
+    allFiles = list()
+
+    for i in listoffile:
+        fullPath = os.path.join(dirName, i)
+
+        if os.path.isdir(fullPath):
+            allFiles = allFiles + getlistoffiles(fullPath)
+        else:
+            allFiles.append(fullPath)
+    return max(allFiles, key=os.path.getctime)
+
+latest_file = getlistoffiles(r'Event 2020-08')
+file = pd.read_csv(latest_file, sep='delimiter', engine='python', header=None)
+file_df = pd.DataFrame(file)
+file_df = file_df.dropna(axis=0)
+
+"""
+Spliting log file into their indvidual columns 
+"""
+file_df = file_df[0].str.split('\t', expand=True)
+file_df['User_PC'] = file_df[1].str.split('(')
+file_df.drop(1, axis=1, inplace=True)
+file_df['User'] = file_df['User_PC'].str[0]
+file_df['PC'] = file_df['User_PC'].str[1]
+file_df['PC'] = file_df['PC'].str.replace(')','')
+file_df.drop('User_PC', axis=1, inplace=True)
+file_df['Project'] = file_df[0].str[0:7]
+file_df['Date'] = file_df[0].str[8:16]
+file_df['Time'] = file_df[0].str[17:]
+file_df.drop(0, axis=1, inplace=True)
+
+"""
+Rearranging columns into their proper order
+"""
+header_name = { 1:'User', 2:'Log'}
+file_df.rename(columns=header_name, inplace=True)
+file_df = file_df[['Project', 'Date','Time', 'User', 'PC','Log']]
+
+#Extracting the date to be inserted in the final output
+date = pd.Series(file_df['Date'].iloc[0])
+
+"""
+Track Assays picking
+Return Project No. that has assays picked
+"""
+assay_picked = file_df['PC'] == 'PHERASTAR-HP'
+assay_picked_pcdf = file_df[assay_picked]
+assay_picked_df = assay_picked_pcdf[assay_picked_pcdf['Log'].str.contains('Created Assay plate')] 
+
+#Return the Project No.(unique) that has assays picked
+assay_picked_df.drop_duplicates(subset='Project', keep='first', inplace=True)
+assay_picked_df.drop(['Date','Time', 'User', 'PC', 'Log'], axis=1, inplace=True)
+assay_picked_df.columns = ['Project']
+assay_picked_df['Assays Picked'] ='Picked'
+assay_picked_df.reset_index(drop=True, inplace=True)
+
+"""
+Track Replikator stamping
+Return Project No. and number of plates stamped per project
+"""
+plates_stamped = file_df['PC'] == 'REPLIKATOR-PC'
+plates_stamped_pcdf = file_df[plates_stamped]
+plates_stamped_df = plates_stamped_pcdf[plates_stamped_pcdf['Log'].str.contains('Created sample plate plate')]
+
+#Return the plates stamped per project
+plates_stamped = pd.DataFrame((plates_stamped_df.groupby('Project')['Log'].count()))
+plates_stamped['Project'] = plates_stamped.index
+plates_stamped = plates_stamped[['Project','Log']]
+plates_stamped.columns = ['Project','Plates Stamped']
+plates_stamped.reset_index(drop=True, inplace=True)
+
+"""
+Track Meridian/ Hydrocycler run
+Return Project no. and number of plates run per project
+"""
+plates_run = file_df['PC'] == 'MEDIRIAN-PC'
+plates_run_pcdf = file_df[plates_run]
+plates_run_df = plates_run_pcdf[plates_run_pcdf['Log'].str.contains('MEDIRIAN-PC:EQUATOR Saved plate')]
+plates_run_df['Plate'] = plates_run_df['Log'].str[32:39]
+plates_run_df.drop(columns='Log', axis=1, inplace=True)
+plates_run_df.drop_duplicates(subset='Plate', keep='first', inplace=True)
+
+#Return the plates run per project
+plates_run = pd.DataFrame((plates_run_df.groupby('Project')['Plate'].count()))
+plates_run['Project'] = plates_run.index
+plates_run = plates_run[['Project', 'Plate']]
+plates_run.columns = ['Project', 'Plates Run']
+plates_run.reset_index(drop=True, inplace=True)
+
+"""
+Track Pherastar Plate Read No
+Return Project no. and plates and its last read number
+"""
+plates_read_df = file_df[file_df['Log'].str.contains('Read#', na=False)]
+
+#plates_read_df = file_df[file_df['Log'].str.contains('Saved plate read data')]
+plates_read_df['Plate'] = plates_read_df['Log'].str[29:36]
+plates_read_df['Last Read'] = plates_read_df['Log'].str[42:43]
+plates_read_df.drop(['User', 'PC','Log'], axis=1, inplace=True)
+
+#Drop duplicates, and just return the last read of the plate
+plates_read_df.drop_duplicates(subset='Plate', keep='last', inplace=True)
+plates_read_df.reset_index(drop=True, inplace=True)
+
+
+"""
+Track Scoring status of projects that has assay Submit
+Return Project no and number of assays that has: Submit
+"""
+assay_submit_df = file_df[file_df['Log'].str.contains('Status:Submit', na=False)]
+
+#Return Project no. with number of assays that has "Submit" status
+assay_submit = pd.DataFrame((assay_submit_df.groupby('Project')['Log'].count()))
+assay_submit['Project'] = assay_submit.index
+assay_submit = assay_submit[['Project', 'Log']]
+assay_submit.columns = ['Project', 'Assays Submitted']
+assay_submit.reset_index(drop=True, inplace=True)
+
+"""
+Track DNA extraction/ Cherry Picking. By tracking "barcode updated by"
+Return Project no and number of plates
+"""
+extract_cherry_df = file_df[file_df['Log'].str.contains('barcode updated by', na=False)]
+extract_cherry_df['Plate'] = extract_cherry_df['Log'].str[72:84]
+
+#Return Project no. and number of plates extracted/ cherrypicked
+extract_cherry = pd.DataFrame((extract_cherry_df.groupby('Project')['Log'].count()))
+extract_cherry['Project'] = extract_cherry.index
+extract_cherry = extract_cherry[['Project', 'Log']]
+extract_cherry.columns = ['Project', 'Extracted/ CherryPicked']
+extract_cherry.reset_index(drop=True, inplace=True)
+
+"""
+Collate all output to csv
+Outputs to collate:
+
+1)assay_picked_df
+2)plates_stamped
+3)plates_run
+4)plates_read_df(to another sheet)
+5)assay_submit
+6)extract_cherry
+"""
+
+#Merging all the data together
+mergeddata1 = pd.merge(assay_picked_df, plates_stamped, how='outer', on='Project')
+mergeddata2 = pd.merge(mergeddata1, plates_run, how='outer', on='Project')
+mergeddata3 = pd.merge(mergeddata2, assay_submit, how='outer', on='Project')
+projecttrack = pd.merge(mergeddata3, extract_cherry, how='outer', on='Project')
+
+#Output append merge data to csv with Date on top
+date.to_csv(r'.csv', na_rep='', index=False, mode='a')
+projecttrack.to_csv(r'.csv', na_rep='NA', index=False, mode='a')
+
+
+#Output append plates_read_df(track last read) with Date on top
+date.to_csv(r'.csv',na_rep='', index=False, mode='a')
+plates_read_df.to_csv(r'.csv',na_rep='', index=False, mode='a')
+
+"""
+Output to email
+Automate email ProjectTrack to requestors
+"""
+##emailadd = input("Enter Your Seedworks Email: ")
+##emailpw = input("Enter Your email Password: ")
+emailadd = pyautogui.prompt('Enter Your  email: ')
+emailpw = pyautogui.password('Enter Your email Password (text will be hidden): ')
+sent_from = emailadd
+sendto = [emailadd, "@.com", ".@.com",".@.com", ".@.com", "@.com" ]#To alter and add in additional email adds
+
+
+from email.mime.text import MIMEText
+from email.mime.application import MIMEApplication
+from email.mime.multipart import MIMEMultipart
+
+#Email headers
+msg = MIMEMultipart()
+msg['Subject'] = "Lab update"
+msg['From'] = emailadd
+msg['To'] = ",".join(sendto)
+
+# Text/ Update html to be sent
+html = """\
+<html>
+  <head></head>
+  <body>
+  <p>Hi there,<br>
+  Lab update for today <strong>{0}</strong>:<br>
+  </p>
+  <strong>Process Updates:</strong>
+    {1}
+  <br>
+  <strong>nan:</strong> Not a number, i.e. zero, no activity<br>  
+  <br><br>
+  <strong>Working plates' last reads:</strong>
+    {2}
+  <br><br>
+  A log of previous and current updates are in the files below:<br><br>
+  <strong>ProjectTrack.csv</strong>: .csv<br>
+  <strong>PlateLastReadTrack.csv</strong>: .csv<br>
+  <br><br>
+  Best Regards,<br>
+  The Lab<br>
+  </body>
+</html>
+""".format(date.to_string(header=False, index=False),
+           projecttrack.to_html(index=False, na_rep='nan', float_format= lambda i:'{0:g}'.format(i)),
+           plates_read_df.to_html(index=False))
+
+update = MIMEText(html, 'html')
+msg.attach(update)
+
+#Sending out the email
+import smtplib
+smtpobj = smtplib.SMTP('smtp.office365.com', 587)
+smtpobj.ehlo()
+smtpobj.starttls()
+smtpobj.login(emailadd, emailpw)
+smtpobj.sendmail(sent_from, sendto, msg.as_string())
+{}
+smtpobj.quit()
